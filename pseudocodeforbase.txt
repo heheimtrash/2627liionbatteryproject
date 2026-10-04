@@ -1,0 +1,51 @@
+import all libraries
+
+
+reproduce ahuja et al 2026's temp metrics --> SoH estimation using do-mpc
+    idle (rest phase) T(t) and T_amb --> alpha
+    cc charging T(t) and T_amb --> beta via mhe
+    beta --> beta_k --> SoH
+
+n for horizon = 30
+nominal sample time = 10s
+n (horizon value) = 30 measurements or samples
+alpha (heat dissipation rate) = 2.2e-3 s^-1
+alpha from first rest phases before cc = 5 cycles (to fit alpha)
+beta function over first cycles = 5 cycles
+max allowed surface temp rise above ambient = 60K (T_amb + 60)
+eol resistance/initial resistance ratio = 2 (used for final beta function value)
+
+variables set below are somewhat ambiguous (paper didn't explicitly state them, but are helpful for mhe)
+temporary upper bound on beta for first 5 cycles = 0.1 K/s
+standard deviation of temp sensor noise = 0.05 K 
+noise variance for T and beta states = 1e-8 (K/s)^2
+
+
+function for loading data
+    time, surface T, amb T, cycle #s, current
+    fixed time step
+
+split cycles into multiple parts
+    from each cycle # gather idle (rest) phase, cc phase with their time and temperature
+    rest cycle is 0 current window before charging
+    cc = constant current
+
+mhe function, alpha as arg
+    equation 6 on the paper
+    model continuous
+    T = 
+    beta = 
+    T_amb = 
+    noise variables???
+run mhe on event, mhe output, temp during cc, amb temp as args
+    feed cc events, return beta
+    reset history
+    set initial guess
+    repeat
+
+
+estimate alpha 
+calibrate alpha 
+
+calculate soh ir drop (eq 13), cycles as arg
+    abs value (V_cc - V_rest)/(current cc - current rest) at the 1st index for every cycle
