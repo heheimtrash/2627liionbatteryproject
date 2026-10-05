@@ -1,0 +1,62 @@
+{
+  "config": {
+    "N_OF_HORIZON": 30,
+    "T_RISE_MAX_K": 60.0,
+    "RF_OVER_R0": 2.0,
+    "N_ALPHA_EVENTS": 5,
+    "ALPHA_PAPER": 0.0022,
+    "ARRIVAL_WEIGHT": 1e-06,
+    "N_BETA0_EVENTS": 5,
+    "TAIL_FRAC": 0.25,
+    "SMOOTH_HALF_WINDOW": 25,
+    "T_AMB_MODE": "exp_fit",
+    "ALPHA_MODE": "ls",
+    "CC_CURRENT_A": 3.0,
+    "CC_CURRENT_TOL_A": 0.3,
+    "REST_CURRENT_TOL_A": 0.05,
+    "MIN_REST_S": 300.0,
+    "MIN_CC_SAMPLES": 20,
+    "EXCLUDE_AFTER_RPT": true,
+    "LN_EPS_K": 0.3,
+    "BETA_BOOTSTRAP_UB": 0.1,
+    "SIGMA_T_K": null,
+    "Q_T_K": 0.02,
+    "Q_BETA_KPS": 0.0002,
+    "STRIDE": 1,
+    "T_AMB_FIXED": 23.0,
+    "MAX_EVENTS": null,
+    "BETA_INIT_KPS": 0.001,
+    "DT_S": null
+  },
+  "alpha": 0.0030029974850354817,
+  "alpha_ls": 0.0030029974850354817,
+  "alpha_each": [
+    0.002984205018190892,
+    0.0030173675377345756,
+    0.0030256109989835337,
+    0.002982686812325108,
+    0.003005117057943297
+  ],
+  "dt": 30.0,
+  "cells": {
+    "VAH01": {
+      "events": 812,
+      "rmse_raw": 4.767177719871589,
+      "rmse_smoothed": 3.400022444800726,
+      "sigma_bar_T": 3.413781537112573,
+      "sigma_bar_IR": 0.6686475517576229,
+      "eol_SoH_T_smooth": 74.43886271536303,
+      "eol_SoH_IR_smooth": 72.26026722433319,
+      "median_fit_rmse_K": 0.1608521117336748,
+      "beta_0": 0.011176533448924601,
+      "beta_f": 0.022353066897849203,
+      "sigma_T": 0.09353793384755904,
+      "t_amb_bol": 24.321350384673327,
+      "runtime_s": 368.5655589103699,
+      "rmse_vs_pulse_20%_1_second": 4.327378898962496,
+      "rmse_vs_pulse_20%_30_second": 10.038129973216106,
+      "rmse_vs_pulse_60%_1_second": 6.656925888860934,
+      "rmse_vs_pulse_60%_30_second": 9.276080895037923
+    }
+  }
+}

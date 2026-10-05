@@ -1,13 +1,14 @@
 # this code is an accurate recreation of Ahuja et al. 2026's methodology, article "Lithium-ion battery State of Health
 # estimation based solely on temperature sensing", J. Power Sources 666 239068
 # dataset is CMU eVTOL dataset, by Bills et al.: https://kilthub.cmu.edu/articles/dataset/eVTOL_Battery_Dataset/14226830
-# required extra packages: casadi, do-mpc, matplotlib, pandas
+# required extra packages: casadi, do-mpc[full], matplotlib, pandas
 
 import numpy as np
-from scipy import curve_fit
+import argparse
+from scipy.optimize import curve_fit
 import sys
 import json # needed as a summary.json file is produced 
-from casadi import *
+import casadi as ca
 import os
 import time
 from pathlib import Path # need this to be able to read files from different path
@@ -21,7 +22,7 @@ import pandas as pd
 # questioning if dataclass should be used? it's slightly more convenient in this situation
 # variables explicitly stated by the paper
 N_OF_HORIZON = 30
-T_RISE_MAX = 60.0
+T_RISE_MAX_K = 60.0
 RF_OVER_R0 = 2.0
 N_ALPHA_EVENTS = 5 # first 5 cycles
 ALPHA_PAPER = 2.2e-3 # thermal dissipation constant
@@ -33,6 +34,8 @@ T_AMB_MODE = "exp_fit"
 ALPHA_MODE = "ls"
 
 # assumed/ambiguous variables required for mhe in this scenario
+_NAMES_BEFORE = set(globals())
+
 CC_CURRENT_A = 3.0
 CC_CURRENT_TOL_A = 0.3
 REST_CURRENT_TOL_A = 0.05 
@@ -46,8 +49,12 @@ Q_T_K = 0.02 # purpose of line below but std on T per step (K)
 Q_BETA_KPS = 2e-4 # process noise on standard deviation (std) on beta each step (K/s)
 STRIDE = 1
 T_AMB_FIXED = 23.0
+MAX_EVENTS = None
+BETA_INIT_KPS = 1e-3 #initial guess for beta at start of each cc
+DT_S = None
 
-SETTING_NAMES = [k for k in list (globals()) if k.isupper]
+SETTING_NAMES = [k for k, v in list(globals().items())
+                 if k.isupper() and isinstance(v, (int, float, str, bool, type(None)))]
 
 # load data
 columns_from_dataset = ["time_s", "Ecell_V", "I_mA", "Temperature__C", "Ns"] # pulled from dataset csv file
@@ -87,7 +94,7 @@ def extractevents(df: pd.DataFrame) -> list[dict]:
                   V_cc0 = V[a], I_cc0 = I[a], V_rest_end = np.nan, I_rest_end = np.nan)
 
         if j > 0:
-            ra, rb = funcruns[j-1]
+            ra, rb = runs[j-1]
             is_rest = np.all(np.abs(I[ra:rb]) < REST_CURRENT_TOL_A)
             duration = t[rb-1] - t[ra]
             if is_rest and duration >= MIN_REST_S:
@@ -136,7 +143,7 @@ def calibrate_alpha(events_per_cell: list[list[dict]]) -> dict: # alpha from fir
     alphas, resid, t_amb_bol = [], [], []
     for events in events_per_cell:
         rests = [e for e in events if e["rest"] is not None][: N_ALPHA_EVENTS]
-        t_amb_bol.append(float(np.mean([funcexp_fit(e["rest"]["t"], e["rest"]["T"][0]) for e in rests])))
+        t_amb_bol.append(float(np.mean([funcexp_fit(e["rest"]["t"], e["rest"]["T"])[0] for e in rests])))
         for e in rests:
             t, T = e["rest"]["t"], e["rest"]["T"]
             t_amb = infer_t_amb(e["rest"], fallback=np.nan, t_amb_bol=t_amb_bol[-1])
@@ -157,80 +164,81 @@ def calibrate_alpha(events_per_cell: list[list[dict]]) -> dict: # alpha from fir
 # T = e^{-a dt} T + (1-e^{-a dt}) T_amb + (1-e^{-a dt})/a * beta + w_T, process noise (w)
 # has units K and K/s each step, making it match equation 9
 
-def __init__(self, alpha: float, dt: float, beta_ub: float, sigma_T: float):
-    self.dt = dt
-    model = do_mpc.model.Model("discrete")
-    T = model.set_variable("_x", "T")
-    beta = model.set_variable("_x", "beta")
-    T_amb = model.set_variable("_tvp", "T_amb")
+class ThermalMHE:
+    def __init__(self, alpha: float, dt: float, beta_ub: float, sigma_T: float):
+        self.dt = dt
+        model = do_mpc.model.Model("discrete")
+        T = model.set_variable("_x", "T")
+        beta = model.set_variable("_x", "beta")
+        T_amb = model.set_variable("_tvp", "T_amb")
 
-    ead = float(np.exp(-alpha * dt))
-    model.set_rhs("T", ead * T + (1.0 - ead) * T_amb + (1.0 - ead) / alpha * beta,
-                    process_noise=True)
-    model.set_rhs("beta", beta, process_noise=True)       # beta constant during CC
-    model.set_meas("T_meas", T, meas_noise=True)            # y = C x + v, C = [1 0]
-    model.setup()
+        ead = float(np.exp(-alpha * dt))
+        model.set_rhs("T", ead * T + (1.0 - ead) * T_amb + (1.0 - ead) / alpha * beta,
+                        process_noise=True)
+        model.set_rhs("beta", beta, process_noise=True)       # beta constant during CC
+        model.set_meas("T_meas", T, meas_noise=True)            # y = C x + v, C = [1 0]
+        model.setup()
 
-    mhe = do_mpc.estimator.MHE(model)
-    mhe.settings.n_horizon = N_HORIZON
-    mhe.settings.t_step = dt
-    mhe.settings.meas_from_data = True
-    mhe.settings.store_full_solution = False
-    mhe.settings.store_lagr_multiplier = False
-    mhe.settings.nlpsol_opts = {"ipopt.print_level": 0, "ipopt.sb": "yes", "print_time": 0}
+        mhe = do_mpc.estimator.MHE(model)
+        mhe.settings.n_horizon = N_OF_HORIZON
+        mhe.settings.t_step = dt
+        mhe.settings.meas_from_data = True
+        mhe.settings.store_full_solution = False
+        mhe.settings.store_lagr_multiplier = False
+        mhe.settings.nlpsol_opts = {"ipopt.print_level": 0, "ipopt.sb": "yes", "print_time": 0}
 
-    # Eq. 9: ||y - C x||^2_{R_MHE} + ||x_{j+1} - (A x_j + B u_j)||^2_{Q_MHE}
-    # do-mpc: P_v weights v (measurement residual), P_w weights w (model residual),
-    # P_x weights the arrival cost, which the paper does not have -> negligible weight.
-    P_v = np.array([[1.0 / sigma_T ** 2]])
-    P_w = np.diag([1.0 / Q_T_K ** 2, 1.0 / Q_BETA_KPS ** 2])
-    P_x = ARRIVAL_WEIGHT * np.diag([1.0 / sigma_T ** 2, 1.0 / Q_BETA_KPS ** 2])
-    mhe.set_default_objective(P_x=P_x, P_v=P_v, P_w=P_w)
+        # Eq. 9: ||y - C x||^2_{R_MHE} + ||x_{j+1} - (A x_j + B u_j)||^2_{Q_MHE}
+        # do-mpc: P_v weights v (measurement residual), P_w weights w (model residual),
+        # P_x weights the arrival cost, which the paper does not have -> negligible weight.
+        P_v = np.array([[1.0 / sigma_T ** 2]])
+        P_w = np.diag([1.0 / Q_T_K ** 2, 1.0 / Q_BETA_KPS ** 2])
+        P_x = ARRIVAL_WEIGHT * np.diag([1.0 / sigma_T ** 2, 1.0 / Q_BETA_KPS ** 2])
+        mhe.set_default_objective(P_x=P_x, P_v=P_v, P_w=P_w)
 
-    # Eq. 10 bounds: 0 <= beta <= beta_f ;  T_amb <= T <= T_amb + 60 (depends on T_amb)
-    mhe.bounds["lower", "_x", "beta"] = 0.0
-    mhe.bounds["upper", "_x", "beta"] = beta_ub
-    mhe.set_nl_cons("T_lower", T_amb - T, ub=0.0)
-    mhe.set_nl_cons("T_upper", T - T_amb - T_RISE_MAX_K, ub=0.0)
+        # Eq. 10 bounds: 0 <= beta <= beta_f ;  T_amb <= T <= T_amb + 60 (depends on T_amb)
+        mhe.bounds["lower", "_x", "beta"] = 0.0
+        mhe.bounds["upper", "_x", "beta"] = beta_ub
+        mhe.set_nl_cons("T_lower", T_amb - T, ub=0.0)
+        mhe.set_nl_cons("T_upper", T - T_amb - T_RISE_MAX_K, ub=0.0)
 
-    self._t_amb = 0.0
-    tvp = mhe.get_tvp_template()
+        self._t_amb = 0.0
+        tvp = mhe.get_tvp_template()
 
-    def tvp_fun(_t_now):
-        tvp["_tvp", :, "T_amb"] = self._t_amb
-        return tvp
+        def tvp_fun(_t_now):
+            tvp["_tvp", :, "T_amb"] = self._t_amb
+            return tvp
 
-    mhe.set_tvp_fun(tvp_fun)
-    mhe.setup()
-    self.mhe = mhe
+        mhe.set_tvp_fun(tvp_fun)
+        mhe.setup()
+        self.mhe = mhe
 
-def run_event(self, T_cc: np.ndarray, t_amb: float) -> tuple[np.ndarray, np.ndarray]:
-    """Feed one CC event's uniformly sampled T through the MHE.
-    Returns (T_hat, beta_hat), one value per sample."""
-    mhe = self.mhe
-    self._t_amb = float(t_amb)
-    mhe.reset_history()
-    # [ASSUMED] the paper starts from "zero initial conditions"; T_hat = 0 would violate
-    # T_hat >= T_amb, so start at the first reading and a small beta.
-    x0 = np.array([[max(T_cc[0], t_amb)], [BETA_INIT_KPS]])
-    mhe.x0 = x0
-    mhe.set_initial_guess()
-    # do-mpc warm-starts from the previous event's solution; re-seed every node instead
-    mhe.opt_x_num["_x", :, :] = x0 / mhe._x_scaling.cat.full()
-    mhe.opt_x_num["_w", :] = 0.0
-    mhe.opt_x_num["_v", :] = 0.0
+    def run_event(self, T_cc: np.ndarray, t_amb: float) -> tuple[np.ndarray, np.ndarray]:
+        """Feed one CC event's uniformly sampled T through the MHE.
+        Returns (T_hat, beta_hat), one value per sample."""
+        mhe = self.mhe
+        self._t_amb = float(t_amb)
+        mhe.reset_history()
+        # [ASSUMED] the paper starts from "zero initial conditions"; T_hat = 0 would violate
+        # T_hat >= T_amb, so start at the first reading and a small beta.
+        x0 = np.array([[max(T_cc[0], t_amb)], [BETA_INIT_KPS]])
+        mhe.x0 = x0
+        mhe.set_initial_guess()
+        # do-mpc warm-starts from the previous event's solution; re-seed every node instead
+        mhe.opt_x_num["_x", :, :] = x0 / mhe._x_scaling.cat.full()
+        mhe.opt_x_num["_w", :] = 0.0
+        mhe.opt_x_num["_v", :] = 0.0
 
-    T_hat = np.empty(len(T_cc))
-    beta_hat = np.empty(len(T_cc))
-    for k, y in enumerate(T_cc):
-        x = mhe.make_step(np.array([[y]]))
-        T_hat[k], beta_hat[k] = float(x[0, 0]), float(x[1, 0])
-    return T_hat, beta_hat
+        T_hat = np.empty(len(T_cc))
+        beta_hat = np.empty(len(T_cc))
+        for k, y in enumerate(T_cc):
+            x = mhe.make_step(np.array([[y]]))
+            T_hat[k], beta_hat[k] = float(x[0, 0]), float(x[1, 0])
+        return T_hat, beta_hat
 
 
-# 90% of the stuff below is written by claude sonnet 5.5 since i've spent way too long just recreating what the paper did as a foundation
-# Also making a main function and a rmse system using ai would save time because i would take less time checking over it than actually making it myself 
-# (more explanation on this on my ai prompt log)
+# ai prompt log
+#
+#
 
 
 # beta_k, SoH_p, references
@@ -337,7 +345,7 @@ def process_cell(name: str, events: list[dict], alpha_info: dict, dt: float,
  
     # Pass B: all selected events with the paper's bound
     keep = (sel[0]["event"], sel[-1]["event"])
-    print(f"  [{name}] pass B: {len(sel)} events, horizon {N_HORIZON} x {dt:.0f} s")
+    print(f"  [{name}] pass B: {len(sel)} events, horizon {N_OF_HORIZON} x {dt:.0f} s")
     est_B = ThermalMHE(alpha, dt, beta_f, sigma_T)
     tab, traces = run_mhe_over_events(est_B, sel, keep_traces=keep, t_amb_bol=t_amb_bol)
  
@@ -435,9 +443,9 @@ def plot_soh(tab, imp, path, title):
 # main
 def main(argv=None):
     # the CLI overrides these module-level settings
-    global STRIDE, MAX_EVENTS, ALPHA_MODE, T_AMB_MODE, T_AMB_FIXED, N_HORIZON, Q_BETA_KPS, Q_T_K
+    global STRIDE, MAX_EVENTS, ALPHA_MODE, T_AMB_MODE, T_AMB_FIXED, N_OF_HORIZON, Q_BETA_KPS, Q_T_K
  
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description="Li ion battery SoH estimation based on temperature sensing")
     ap.add_argument("--csv", nargs="+", required=True, help="cell time-series CSV(s)")
     ap.add_argument("--impedance", nargs="*", default=[], help="matching *_impedance.csv (optional)")
     ap.add_argument("--out", default="results_step1")
@@ -447,14 +455,14 @@ def main(argv=None):
     ap.add_argument("--t-amb-mode", choices=["rest_min", "exp_fit_bol", "exp_fit", "fixed"],
                     default=T_AMB_MODE)
     ap.add_argument("--t-amb-fixed", type=float, default=T_AMB_FIXED)
-    ap.add_argument("--horizon", type=int, default=N_HORIZON)
+    ap.add_argument("--horizon", type=int, default=N_OF_HORIZON)
     ap.add_argument("--q-beta", type=float, default=Q_BETA_KPS, help="beta process-noise std per step [K/s]")
     ap.add_argument("--q-T", type=float, default=Q_T_K, help="T process-noise std per step [K]")
     ap.add_argument("--no-plots", action="store_true")
     a = ap.parse_args(argv)
  
     STRIDE, MAX_EVENTS, ALPHA_MODE = a.stride, a.max_events, a.alpha_mode
-    T_AMB_MODE, T_AMB_FIXED, N_HORIZON = a.t_amb_mode, a.t_amb_fixed, a.horizon
+    T_AMB_MODE, T_AMB_FIXED, N_OF_HORIZON = a.t_amb_mode, a.t_amb_fixed, a.horizon
     Q_BETA_KPS, Q_T_K = a.q_beta, a.q_T
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
  
@@ -464,7 +472,7 @@ def main(argv=None):
         name = Path(p).stem
         print(f"loading {p} ...", flush=True)
         df = load_cell(p)
-        events, rpt_times = extract_events(df)
+        events, rpt_times = extractevents(df)
         n_rest = sum(e["rest"] is not None for e in events)
         print(f"  {len(events)} CC events at ~{CC_CURRENT_A} A ({n_rest} with a usable rest), "
               f"{len(rpt_times)} RPT charges")
@@ -479,7 +487,7 @@ def main(argv=None):
     # 3) sample time
     dts = [np.median(np.diff(e["cc_t"])) for c in cells.values() for e in c["events"]]
     dt = DT_S or float(np.round(np.median(dts), 3))
-    print(f"MHE sample time = {dt:.1f} s, horizon = {N_HORIZON} samples ({N_HORIZON * dt:.0f} s)")
+    print(f"MHE sample time = {dt:.1f} s, horizon = {N_OF_HORIZON} samples ({N_OF_HORIZON * dt:.0f} s)")
  
     summary = dict(config={k: globals()[k] for k in SETTING_NAMES}, alpha=ainfo["alpha"], alpha_ls=ainfo["alpha_ls"],
                    alpha_each=ainfo["alpha_each"], dt=dt, cells={})
