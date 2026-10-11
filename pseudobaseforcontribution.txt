@@ -1,0 +1,54 @@
+an rpt phase is a periodic diagnosis of battery health
+in each dataset csv file, cc data shows OCV and IR as the same thing, so pulses and multiple charging rates are what makes each part identifiable.
+
+ocv doesn't come from C/2 charge? constant offset in resistance and a shape change in OCV look the same?
+    database csv files have rest/idle voltages before 20% and 60% soc pulses, so they will be kept for validation
+    note: 20% and 60% are only for VAH01 csv files in the database, will have to check for other later
+
+R at 1s is R0 plus some small value, R(30s) is R0 + majority of Rp, and R_cc is long-time effective resistance during the full cc
+--> total resistnace should be measured as R_cc. 
+
+tau is how fast the polarization voltage builds/decays, e.g 1tau means polarization reaches ~63%, 3tau 95%, and 5tau 99% (1-e^(-t/tau))
+for cc reocnstruction, R_total should matter much more than R0/Rp split
+
+check Chiang et al. 2011 for extra info on OCV estimation
+
+load database csv file
+load beginning of life RPT block (aka 1st cycle): C/2 cc-cv charge/discharge, pulse tests at 20 and 60% soc, rest segments before/after each pulse
+
+Q_(beginning of life segment) = integral of I over bol rpt full charge (both cc and cv phases) starting from empty soc
+SoC(t) = integral of I / Q_(bol)
+
+for p in pulses (each 20%, 60%)
+    V0 = mean v over last 10s of anything before rest phase
+
+    keep R0, Rp, tau, drift as free parameters (adjustable/unconstrained)
+pulse
+    simulate over pulse + relaxation:
+        V1[k+1] = a*V1[k] + Rp*(1−a)*I[k],  a = e^(−Δt/tau)   (same thing as base.py)
+        V_hat[k]   = V0 + I[k]*R0 + V1[k] + drift*(SoC[k]−SoC_p)
+    fit by least squares, all > 0, multi-start for when tau is 5, 20, or 60s
+    fit pulse and relaxation jointly (relaxation pins R0 via the instantaneous drop)
+    checks: R0 <= R_1s;  R0 + Rp*(1−e^(−30/tau)) approximately R_30s;  tau not at a bound
+    store (R0_p, Rp_p, tau_p, fit RMSE)
+
+long time effective R (R_eff) from 2 charge rates
+V_half = RPC C/2 cc voltage on soc list (cut off first 3tau)   - list --> grid format?
+V_1C = median over early rpt 1c cc phase on same list  (cut off first 3 tau)
+R_cc = (V_1C - V_half) / (I_1C - I_half)
+if R_cc approximately R_30s
+    R_eff = Rp from pulses and tau from pulses
+else
+    R_eff = R_cc - R0, tau_eff fit on C/2 charge residuals
+
+raw ocv = V_half - I_half * R_cc
+use pulse R0
+monotone fit (isotonic) but keep derivative of OCV with respect to SoC the same
+compare to pulse rest voltages for validation
+
+theta = {OCV loops, R0, Rp, tau}, initialize from pulse analysis, r_eff fit, and ocv on charge branch
+minimize sum of (V-simulated theta)^2 + lambda (regularization weight) * smoothness(theta) + penalty for keeping theta near the initial state
+
+ECM of bol = {OCV(s), R_total, R0/(R0/Rp), tau, Q_BOL, T_ref, uncertainty over pulse/events}
+
+
