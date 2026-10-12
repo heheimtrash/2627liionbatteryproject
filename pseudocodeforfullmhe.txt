@@ -1,0 +1,128 @@
+T+ = e^(-alpha dt) * T + (1-(e^(-alpha dt))) * T_amb + (1-(e^(-alpha dt)))/alpha * beta
+beta+ = beta
+soc+ = soc + I_cc * dt / (3600 Q_k)
+there is no soc information that is able to be obtained through T, or beta?
+    using shape of beta(t) is banned because of some jank with the bol phase from probably entropic heat, 
+    using cc phase ending time to calculate is fine, as the charger switches to cv when V reaches its peak height but cc start/end times are required
+    using initial soc's arrival cost (penalty term for mhe, ||x_0 - xhat_0||^2) is fine but requires prior info from known cycles, as well as battery usage plan/charge rates
+
+    need an anchor term to improve estimate after cc pase, not during estimation or else cc-cv phase switch timing loops on the same time
+    should include some resistance scale from previous events (r_trail) so it only affects SoC? eol soc would still drift away from true values
+    so ocv will probably offset a ton as well
+
+V shouldn't be fed back into the estimator so anything that affects it should be computed after the mhe
+    RC polarization: EcmModel class's simulate() function does that
+    if its added then they will just loop the same value again, except the anchor term
+
+
+
+step 1 handoffs
+    alpha, sigma_t
+    T_amb every event
+    beta_0, beta_f
+
+step 2 handoffs (from results summary.json)
+    soc_grid, ocv_V, r_total, phi, tau, soc_valid, q_bol, rcc_measured range
+
+inputs per cc
+    T(t), T_amb
+    I_cc or cc_current
+    V_cv
+    Ah_mission (usage plan, need for soc0 prior)
+
+settings shared with step 1
+data logging rate = 30.0
+N = 30
+Q_T_K = 0.02
+Q_BETA_KPS = 2e-4
+ARRIVAL_W_TB = 1e-6
+T_RISE_MAX_K = 60.0
+BETA_INIT_KPS = 1e-6
+TAIL_FRAC = 0.25
+
+new settings for this step
+CC_CURRENT_A = 3.0 (1C)
+V_CV = 4.2
+SIGMA_SOC0 = 0.02
+SOC0_UNINFORMED = (0.35, 0.10)  dataset soc0 spans 0.25-0.45 --> (mean, std)
+SIGMA_PLAN_AH (noise)
+Q_SOC
+SOC_COUPLING (none or joule_shape)
+CC_END_ANCHOR (boolean)
+ANCHOR_R_SOURCE (trailing, state)
+SIGMA_ANCHOR_V
+LINEARIZE_ANCHOR = False
+R_TRAIL_N = 25
+R_SCALE_SOURCE (event, trailing)
+SPLIT_MODE (fixed, aging)
+LUT_KIND (from casadi interpolant)
+
+
+lookup tables
+make_luts(handoff)
+    g = 
+    OCV = ca.interpolant("ocv",   ... )
+    RBOL = a.interpolant("rbol", ...)
+    return OCV, RBOL
+r_total_expr(soc, beta, r_anchor, RBOL):
+    if ANCHOR_R_SOURCE ==
+
+
+do-mpc model 
+build_model(OCV, RBOL, alpha, dt):
+    model =
+    T = model.set_variable
+    beta = 
+    soc = 
+
+    T_amb = 
+    I_cc = 
+    Q_ah = 
+    anchor_on = 
+    r_ancor = 
+    ead = e^(-alpha * dt)
+    dsoc = I_cc * dt / (3600 Q_k)
+
+    similar code to build_model in step 1
+
+    V1 = Rp*I, CV switch happens between last CC smaple and next
+    anchor is evaluated half a step ahead of last CC step???
+    s_end = soc + 0.5*dsoc
+
+    set expression("V_qs", OCV(soc + I_cc * r_total_expr(soc, beta, r_anchor, RBOL)))
+
+    set meas("T_meas", T, meas_noise = True)
+
+
+mhe setup
+lowkey just copy the data generation example on do-mpc again
+
+
+
+one cc event
+run event(mhe, ctx, T_cc, soc0_prior):
+    n = 
+    ctx.i_end = n - 1
+    x0 = [max(T_cc[0], ctx.T_amb), BETA_INIT_KPS, soc0_prior]
+    reset history
+    set initial guess
+
+    filter = empty for n to 3
+
+
+
+derived V(t)
+reconstruct_V(ecm, t, soc0, Q_k, r, k_event)
+    I = array of the length of t, CC_CURRENT_A
+    soc = soc0 + CC_CURRENT_A*t/(3600 Q_k)
+    phi_shift = 0
+    if SPLIT_MODE == "aging"
+        phi_shift = phi_trend(k_event) - phi_trend(0)
+    return ecm simulate(t, I, soc, v1_0=0.0, r_scale=r, phi_shift=phi_shift)
+
+pipeline over a cell
+
+
+
+
+i'll finish this next time
