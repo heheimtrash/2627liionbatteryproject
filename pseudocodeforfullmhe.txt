@@ -1,3 +1,15 @@
+NOTE: step 2 (voltage_with_ecm.py) originally had a forwards frame, which means SoC0 is 1-(capacity that has been used)/Q, Ah comes from integrating logged 
+discharge current from full charge up to the event's start
+
+a backwards frame was added to that script, where SoC0 is 1-(capacity that has been put back or unused)/Q, where Ah is counted from this event's 
+start to end of its own CV phase (full soc). 
+this was added because discharge integral on the dataaset is inflated slightly while discharge logging is 1 second, which sums to around 0.15 Ah (?)
+after it switches to 10 seconds, making forward SoC0 too low. this compounds over multiple cycles, so the backwards frame works better.
+
+
+NOTE 2.0: add ablation suite to the end of the script, set of reruns of same step 3 on same subset of changes
+e.g default, no_anchor, oracle_soc0 (exact soc0 no anchor), oracle_r (resistance scale in post product), r_trailing, plan_noise, etc.
+
 T+ = e^(-alpha dt) * T + (1-(e^(-alpha dt))) * T_amb + (1-(e^(-alpha dt)))/alpha * beta
 beta+ = beta
 soc+ = soc + I_cc * dt / (3600 Q_k)
@@ -62,7 +74,7 @@ lookup tables
 make_luts(handoff)
     g = 
     OCV = ca.interpolant("ocv",   ... )
-    RBOL = a.interpolant("rbol", ...)
+    RBOL = ca.interpolant("rbol", ...)
     return OCV, RBOL
 r_total_expr(soc, beta, r_anchor, RBOL):
     if ANCHOR_R_SOURCE ==
@@ -120,9 +132,17 @@ reconstruct_V(ecm, t, soc0, Q_k, r, k_event)
         phi_shift = phi_trend(k_event) - phi_trend(0)
     return ecm simulate(t, I, soc, v1_0=0.0, r_scale=r, phi_shift=phi_shift)
 
-pipeline over a cell
-
-
-
-
-i'll finish this next time
+pipeline over a cell (from step 1 and 2)
+process_cell(csv, handoffjson, rpt_capacity_csv)
+    events = step1 extract_events(...)
+    rpt_times = 
+    alpha = step1 calibrate_alpha
+    sigma_t = 
+    t_amb_bol = 
+    beta_0, beta_f = step1 pass A
+    handoff = load(pipeline file json)
+    ecm = 
+    q_fade = fit_fade_curve(rpt_capacity_csv)
+    sigma_soc0 = 
+    model = build_model(ocv, rbol, alpha, dt_s)
+    mhe = build_mhe(model, sigma_t, beta_f, sigma_soc0, ctx)

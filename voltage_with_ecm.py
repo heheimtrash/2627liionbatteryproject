@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+step2_ecm_calibration.py -- Step 2: one-time BOL calibration of a 1-RC Thevenin ECM from measured V/I.
+
+Nothing from Step 1 is read. The hand-off JSON written here is combined with Step 1's R_ratio_T
+only in Step 3:  R_total(t) = R_total_BOL(SoC) * R_ratio_T(t),  R0 = phi*R_total,  Rp = (1-phi)*R_total.
+
 Sign convention (VAH01 logs charge current as POSITIVE):
     V = OCV(SoC) + I*R0(SoC) + V1,         tau * dV1/dt = -V1 + Rp(SoC)*I
     V1[k+1] = a*V1[k] + Rp*(1 - a)*I[k],   a = exp(-dt/tau)        (exact zero-order hold, as in Step 1)
@@ -21,9 +26,9 @@ What deployment may use is only the frozen hand-off bundle (OCV, R_total_BOL, ph
 Tags in comments: [DATA] read off the VAH01 files (see CLAUDE.md), [ASSUMED] my choice where nothing
 fixes it, [DEV-ONLY] uses measured V/I in a way that never belongs on the deployment path.
 
-Usage:
-    python voltage_with_ecm.py --csv VAH01.csv --impedance VAH01_impedance.csv --out step2_results
-    python voltage_with_ecm.py --csv VAH01.csv --inventory-only      # look before fitting
+Usage: 
+    python step2_ecm_calibration.py --csv VAH01.csv --impedance VAH01_impedance.csv --out step2_results
+    python step2_ecm_calibration.py --csv VAH01.csv --inventory-only      # look before fitting
 """
 
 import argparse
@@ -57,6 +62,12 @@ MIN_CC_SAMPLES = 20             # [ASSUMED] same as Step 1
 RPT_MIN_DURATION_S = 1800.0     # [ASSUMED] a C/2 CC run longer than this is an RPT charge
 EMPTY_V = 3.0                   # [ASSUMED] a discharge whose voltage drops below this reached "empty"
 Q_SOURCE = "auto"               # [ASSUMED] "auto" | "discharge" | "charge": which RPT leg defines Q
+SOC0_REF = "backward"            # [ASSUMED] SoC0 of a mission charge: "forward" = 1 - (Ah out since the last full) / Q
+                                # (original behaviour); "backward" = 1 - (Ah put back to the end of this charge's CV) / Q.
+                                # [DATA] On VAH01 the trapezoid integral of the logged discharge current runs 0.073 Ah
+                                # above the Ah put back while discharge logging is 1 s, and 0.15 Ah above after it
+                                # changes to 10 s (around cycle 300); the cycler's own QDischarge counter shows no such
+                                # step, and the charge-side integral matches QCharge exactly. "backward" avoids this.
 
 # --- Pulse detection and fit (pseudocode step 2) ---
 PULSE_MIN_S = 1.0               # [ASSUMED]
@@ -345,6 +356,12 @@ def soc0_backward(cell, ev, q):
     if ev["cv_stop"] is None:
         return np.nan
     return float(1.0 - (cell["cum_ah"][ev["cv_stop"] - 1] - cell["cum_ah"][ev["start"]]) / q)
+
+def soc0_ref(cell, fulls, ev, q): # NOT PART OF ORIGINAL SCRIPT, FUNCTION FOR SoC0_REF backwards frame
+    """SoC0 of a mission charge in the frame chosen by SOC0_REF."""
+    if SOC0_REF == "backward":
+        return soc0_backward(cell, ev, q)
+    return soc0_forward(cell, fulls, ev["start"], q)
 
 
 def event_soc(cell, ev, soc0, q):
@@ -828,8 +845,8 @@ def aging_floor(cell, model, events, fulls, q_of_t, q_bol, stride):
     for ev in use:
         V = cell["V"][ev["start"]:ev["stop"]]
         q_c = float(q_of_t(ev["t0"]))
-        soc0_c = soc0_forward(cell, fulls, ev["start"], q_c)
-        soc0_b = soc0_forward(cell, fulls, ev["start"], q_bol)
+        soc0_c = soc0_ref(cell, fulls, ev, q_c)
+        soc0_b = soc0_ref(cell, fulls, ev, q_bol)
         if not (np.isfinite(soc0_c) and np.isfinite(soc0_b)):
             continue
         t, I, _, soc, _ = simulate_event(cell, model, ev, soc0_c, q_c)
@@ -1072,7 +1089,7 @@ def to_jsonable(x):
 
 
 def main(argv=None):
-    global N_FIT_EVENTS, N_VAL_EVENTS, AGING_STRIDE, RUN_JOINT_REFINE, MAKE_PLOTS, CC_CURRENT_A, RPT_CURRENT_A
+    global N_FIT_EVENTS, N_VAL_EVENTS, AGING_STRIDE, RUN_JOINT_REFINE, MAKE_PLOTS, CC_CURRENT_A, RPT_CURRENT_A, SOC0_REF
     ap = argparse.ArgumentParser(description="Step 2: BOL ECM calibration from measured V/I.")
     ap.add_argument("--csv", required=True, help="cell time-series CSV (e.g. VAH01.csv)")
     ap.add_argument("--impedance", default=None, help="optional <cell>_impedance.csv, for cross-checks")
@@ -1086,7 +1103,10 @@ def main(argv=None):
     ap.add_argument("--rpt-current", type=float, default=RPT_CURRENT_A)
     ap.add_argument("--joint-refine", action="store_true")
     ap.add_argument("--no-plots", action="store_true")
+    ap.add_argument("--soc0-ref", choices=["forward", "backward"], default=SOC0_REF,
+                    help="SoC0 frame of the mission charges (see SOC0_REF)")
     args = ap.parse_args(argv)
+    SOC0_REF = args.soc0_ref
     N_FIT_EVENTS, N_VAL_EVENTS, AGING_STRIDE = args.n_fit_events, args.n_val_events, args.aging_stride
     CC_CURRENT_A, RPT_CURRENT_A = args.cc_current, args.rpt_current
     RUN_JOINT_REFINE = RUN_JOINT_REFINE or args.joint_refine
@@ -1115,7 +1135,7 @@ def main(argv=None):
     q_bol = blk["q"]
     fulls = full_indices(events, blocks)
     for ev in events:
-        ev["soc0"] = soc0_forward(cell, fulls, ev["start"], q_bol)
+        ev["soc0"] = soc0_ref(cell, fulls, ev, q_bol)
     nxt_rpt = blocks[args.bol_rpt + 1]["full"] if args.bol_rpt + 1 < len(blocks) else cell["n"]
     bol_ev = [ev for ev in events if blk["full"] < ev["start"] < nxt_rpt and np.isfinite(ev["soc0"])
               and (USE_POST_RPT_1C or not ev["after_rpt"])]
@@ -1302,6 +1322,7 @@ def main(argv=None):
                           "SoC(t)": "SoC0 + integral(I_known)/Q(k); Q(k) from a fade curve, not from here",
                           "valid ranges": "OCV outside soc_valid and R_total outside the two-rate overlap are extrapolated"},
                    provenance=dict(csv=os.path.abspath(args.csv), impedance=args.impedance, bol_rpt=args.bol_rpt,
+                                   soc0_ref=SOC0_REF,
                                    fit_events=[ev["k"] for ev in fit_ev], val_events=[ev["k"] for ev in val_ev]))
     with open(os.path.join(args.out, f"{name}_ecm_bol.json"), "w") as fh:
         json.dump(to_jsonable(handoff), fh, indent=1)
