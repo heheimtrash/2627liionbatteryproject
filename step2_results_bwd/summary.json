@@ -1,0 +1,125 @@
+{
+ "cell": "VAH01",
+ "runtime_s": 2.5,
+ "q_bol_Ah": 3.0910378767561015,
+ "q_source": "discharge",
+ "n_pulses": 2,
+ "n_pulses_used": 2,
+ "tau_used_s": 36.50315686050153,
+ "resistance": {
+  "ratio_rcc_over_pulse": 0.45932198406446056,
+  "ratio_at_soc": [
+   0.8029265866788867
+  ],
+  "ratio_from_overlap": true,
+  "rcc_soc_range": [
+   0.61,
+   0.835
+  ],
+  "mode": "effective"
+ },
+ "phi_at_pulse_socs": {
+  "0.80": 0.868620488868412,
+  "0.41": 0.98
+ },
+ "tierA": {
+  "rmse_mV": 1.512194443666404,
+  "rmse_after_trim_mV": 1.3198127053395277,
+  "max_abs_mV": 5.915497702982275
+ },
+ "tierB": {
+  "mean_rmse_mV": 7.391509952258181,
+  "max_abs_mV": 29.496667623833073,
+  "mean_end_of_cc_err_mV": -0.7692503670907236,
+  "mean_abs_cv_time_err_s": 5.798623520945898,
+  "n_cv_not_reached": 0,
+  "residual_temperature_corr": -0.6164035480585852,
+  "ratio_to_tierA": 5.600423395194307
+ },
+ "joint_refine": null,
+ "tierC": [
+  {
+   "soc": 0.8029265866788867,
+   "kind": "step",
+   "err_mV": 45.42429365168488
+  },
+  {
+   "soc": 0.40899606332007077,
+   "kind": "step",
+   "err_mV": 69.03934216199347
+  }
+ ],
+ "settings": {
+  "CHARGE_POSITIVE": true,
+  "CC_CURRENT_A": 3.0,
+  "RPT_CURRENT_A": 1.5,
+  "CURRENT_REL_TOL": 0.1,
+  "REST_CURRENT_A": 0.02,
+  "MIN_CC_SAMPLES": 20,
+  "RPT_MIN_DURATION_S": 1800.0,
+  "EMPTY_V": 3.0,
+  "Q_SOURCE": "auto",
+  "SOC0_REF": "backward",
+  "PULSE_MIN_S": 1.0,
+  "PULSE_MAX_S": 120.0,
+  "PULSE_MIN_DI_A": 0.3,
+  "PRE_MIN_S": 300.0,
+  "PRE_FIT_S": 300.0,
+  "PRE_REST_AVG_S": 10.0,
+  "POST_FIT_S": 300.0,
+  "IMPEDANCE_LABEL": "dod",
+  "IMPEDANCE_SOC_TOL": 0.15,
+  "TAU_STARTS_S": [
+   5.0,
+   20.0,
+   60.0
+  ],
+  "TAU_BOUNDS_S": [
+   0.5,
+   600.0
+  ],
+  "DRIFT_BOUNDS_V": [
+   0.0,
+   3.0
+  ],
+  "PULSE_MAX_RMSE_V": 0.005,
+  "PULSE_SOC_CLUSTER": 0.05,
+  "TAU_FALLBACK_S": 30.0,
+  "TAU_PER_SOC": false,
+  "SOC_GRID_N": 201,
+  "TRIM_TAU_MULT": 3.0,
+  "TRIM_MIN_S": 60.0,
+  "RCC_TRIM_S": 600.0,
+  "N_FIT_EVENTS": 10,
+  "N_VAL_EVENTS": 10,
+  "MIN_EVENTS_PER_BIN": 3,
+  "RCC_SMOOTH_BINS": 5,
+  "RCC_MATCH_TOL": 0.15,
+  "OCV_KNOTS": 12,
+  "USE_POST_RPT_1C": false,
+  "RUN_JOINT_REFINE": false,
+  "SMOOTHNESS_WEIGHT": 0.01,
+  "PRIOR_WEIGHT": 0.01,
+  "R_KNOTS": 6,
+  "BOOTSTRAP_N": 200,
+  "SOC0_PERTURB": [
+   0.01,
+   0.02,
+   0.05
+  ],
+  "RTOT_PERTURB": 0.1,
+  "PHI_PERTURB": 0.1,
+  "AGING_STRIDE": 10,
+  "V_CV_DEFAULT": 4.2,
+  "CV_EXTEND_MAX_S": 1800.0,
+  "RANDOM_SEED": 0,
+  "MAKE_PLOTS": true,
+  "PARAM_NAMES": [
+   "R0",
+   "Rp",
+   "ltau",
+   "drift",
+   "c0"
+  ]
+ }
+}
